@@ -4,6 +4,7 @@
 Drops PyQt5 / cffi / tgcrypto / ffi_openssl.so in favour of stdlib + pycryptodome.
 Key derivation, IGE and CTR semantics are kept byte-for-byte compatible.
 """
+import argparse
 import hashlib
 import os
 import struct
@@ -217,19 +218,42 @@ DEFAULT_TDATA = os.path.join(
     os.environ.get('APPDATA', ''), 'Telegram Desktop', 'tdata')
 
 
-def main():
-    """Usage: tdecrypt.py <outdir> [tdata] [tdata_with_key_datas]"""
-    outdir = sys.argv[1] if len(sys.argv) > 1 else '.'
-    tdata = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_TDATA
-    keydir = sys.argv[3] if len(sys.argv) > 3 else tdata
-    topdir = os.path.join(tdata, 'user_data', 'media_cache')
+def add_common_args(ap):
+    """Key and cache are addressed independently; neither implies the other."""
+    ap.add_argument('out', nargs='?', default='out',
+                    help='output directory (default: ./out)')
+    ap.add_argument('-t', '--tdata', default=DEFAULT_TDATA,
+                    help='profile directory, used only to derive the defaults '
+                         'for --key and --cache')
+    ap.add_argument('-k', '--key', metavar='FILE',
+                    help='key_datas file (default: <tdata>/key_datas)')
+    ap.add_argument('-c', '--cache', metavar='DIR',
+                    help='directory of encrypted entries to walk '
+                         '(default: <tdata>/user_data/media_cache)')
+    return ap
 
-    print('Reading key from', os.path.join(keydir, 'key_datas'))
-    LocalKey = read_key(os.path.join(keydir, 'key_datas'))
-    print('  local key ok, %d bytes' % len(LocalKey))
+
+def resolve(args):
+    """-> (key_datas path, cache directory)."""
+    return (args.key or os.path.join(args.tdata, 'key_datas'),
+            args.cache or os.path.join(args.tdata, 'user_data', 'media_cache'))
+
+
+def main():
+    ap = add_common_args(argparse.ArgumentParser(
+        description='Decrypt Telegram Desktop cache entries.'))
+    args = ap.parse_args()
+    keyfile, cachedir = resolve(args)
+
+    print('key   :', keyfile)
+    print('cache :', cachedir)
+    LocalKey = read_key(keyfile)
+    print('local key ok, %d bytes' % len(LocalKey))
+    print()
     assert len(LocalKey) == 256, 'unexpected local key length'
 
-    for root, _, files in os.walk(topdir):
+    os.makedirs(args.out, exist_ok=True)
+    for root, _, files in os.walk(cachedir):
         for name in files:
             if name in ('version', 'binlog'):
                 continue
@@ -247,8 +271,7 @@ def main():
             print('  %d bytes (%d block padding trimmed), head=%s, type=%s'
                   % (len(data), padded - len(data), data[:16].hex(),
                      ext or 'unknown'))
-            out = os.path.join(outdir, name + ('.' + ext if ext else '.bin'))
-            os.makedirs(outdir, exist_ok=True)
+            out = os.path.join(args.out, name + ('.' + ext if ext else '.bin'))
             with open(out, 'wb') as f:
                 f.write(data)
             print('  ->', out)

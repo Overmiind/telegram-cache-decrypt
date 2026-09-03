@@ -27,16 +27,30 @@ Rebuild every video in the cache:
 
 ```
 python tgvideos.py out_dir
-python tgvideos.py out_dir "<tdata>" "<tdata_holding_key_datas>"
 ```
-
-Both paths default to `%APPDATA%\Telegram Desktop\tdata`. The second is
-separate because of the Sandboxie case described below.
 
 Decrypt every cache entry as-is, without reassembly:
 
 ```
-python tdecrypt.py out_dir [tdata] [tdata_with_key_datas]
+python tdecrypt.py out_dir
+```
+
+Both take the same options. The key file and the cache directory are addressed
+independently and neither implies the other, so they need not come from the
+same profile — or from a live install at all.
+
+```
+-k, --key FILE    key_datas file        (default: <tdata>/key_datas)
+-c, --cache DIR   directory to walk     (default: <tdata>/user_data/media_cache)
+-t, --tdata DIR   profile directory, used only to derive those two defaults
+```
+
+`--tdata` itself defaults to `%APPDATA%\Telegram Desktop\tdata`, so with a
+normal install you can pass nothing. Otherwise point `--cache` at any directory
+of encrypted entries and `--key` at any matching `key_datas`:
+
+```
+python tgvideos.py out_dir -c /path/to/some/media_cache -k /path/to/key_datas
 ```
 
 Check the results:
@@ -147,10 +161,13 @@ says which comes first; they are ordered by file write time. That is download
 order, which equals file order for a straight-through watch. Seeking around
 mid-download could break the assumption — `verify.py` will catch it if so.
 
-**Sandboxie.** A Telegram running in a sandbox writes its cache inside the
-sandbox but reads `key_datas` through from the real profile by copy-on-write,
-so the sandbox `tdata` has no key of its own. Pass the cache path and the real
-profile path separately.
+**Split key and cache.** A cache directory and the `key_datas` that opens it do
+not have to live together. Copied profiles, backups, disk images and
+containerised or path-redirected installs can all separate them — a redirected
+install often keeps its cache in the redirected location while still reading
+the original profile's key. `--key` and `--cache` are independent for exactly
+this reason; the only requirement is that the cache was written under the key
+you supply.
 
 **Partial downloads.** Telegram only caches what you actually watched. When the
 slices don't add up to the declared size, the rebuild is reported as

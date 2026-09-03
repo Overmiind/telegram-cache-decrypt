@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconstruct whole videos from Telegram Desktop's big-file media cache.
 
-Usage: tgvideos.py <outdir> [tdata_with_cache] [tdata_with_key_datas]
+Usage: tgvideos.py [outdir] [-k key_datas] [-c cache_dir] [-t tdata]
 
 Cache layout for a streamed video:
   * The FIRST entry is a part map, not a contiguous prefix. It is a series of
@@ -12,16 +12,15 @@ Cache layout for a streamed video:
   * Further 8 MiB slices live as separate, descriptor-less entries in other
     media_cache/0/XX/ subfolders, written in download order.
 
-A sandboxed (Sandboxie) Telegram keeps its own cache but inherits key_datas
-from the real profile by copy-on-write, hence the separate key path.
+The key file and the cache directory are addressed independently, so they
+need not sit in the same profile.
 """
+import argparse
 import os
 import struct
 import sys
 
-from tdecrypt import read_key, storage_file_read
-
-TDATA = os.path.join(os.environ.get('APPDATA', ''), 'Telegram Desktop', 'tdata')
+from tdecrypt import add_common_args, read_key, resolve, storage_file_read
 PART = 131072                       # 128 KiB
 SLICE = 64 * PART                   # 8 MiB
 
@@ -90,14 +89,16 @@ def duration(d):
 
 
 def main():
-    outdir = sys.argv[1] if len(sys.argv) > 1 else 'videos'
-    tdata = sys.argv[2] if len(sys.argv) > 2 else TDATA      # cache to scan
-    keydir = sys.argv[3] if len(sys.argv) > 3 else tdata     # key_datas home
+    ap = add_common_args(argparse.ArgumentParser(
+        description='Rebuild whole videos from a Telegram Desktop media cache.'))
+    args = ap.parse_args()
+    keyfile, cachedir = resolve(args)
+    outdir = args.out
     os.makedirs(outdir, exist_ok=True)
-    key = read_key(os.path.join(keydir, 'key_datas'))
+    key = read_key(keyfile)
 
     entries = []
-    for root, _, files in os.walk(os.path.join(tdata, 'user_data', 'media_cache')):
+    for root, _, files in os.walk(cachedir):
         for n in files:
             if n in ('version', 'binlog'):
                 continue
