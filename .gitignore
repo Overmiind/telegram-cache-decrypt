@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.mp4
+*.bin
+*.rar
+videos/
+out/
+sandbox_videos/
+joined/
