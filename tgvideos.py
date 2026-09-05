@@ -20,7 +20,8 @@ import os
 import struct
 import sys
 
-from tdecrypt import add_common_args, read_key, resolve, storage_file_read
+from tdecrypt import (add_common_args, read_key, repair_mp4, resolve,
+                      storage_file_read)
 PART = 131072                       # 128 KiB
 SLICE = 64 * PART                   # 8 MiB
 
@@ -54,7 +55,13 @@ def is_box(t):
 
 
 def declared_end(d):
-    """Where the MP4 ends per its own boxes; stops at trailing block padding."""
+    """Where the MP4 ends per its own boxes; stops at trailing block padding.
+
+    Give this the whole assembled head, not just its first part: moov is
+    routinely larger than one 128 KiB part, and stopping early means never
+    reaching mdat and mistaking the end of moov for the end of the file.
+    (A genuinely sparse head could still cut the walk short at a zero hole;
+    heads seen in practice are contiguous from offset 0.)"""
     end = p = 0
     while p + 8 <= len(d):
         sz = struct.unpack('>I', d[p:p + 4])[0]
@@ -116,7 +123,10 @@ def main():
     for i, (mt, name, raw, segs) in enumerate(heads, 1):
         pieces = list(segs) if segs else [(0, raw)]
         covered = max(o + len(b) for o, b in pieces)
-        end = declared_end(pieces[0][1])
+        head = bytearray(covered)
+        for off, body in pieces:
+            head[off:off + len(body)] = body
+        end = declared_end(bytes(head))
         nxt = heads[i][0] if i < len(heads) else float('inf')
 
         parts = []
@@ -140,21 +150,29 @@ def main():
             used.add(pick[1])
             covered += len(pick[2])
 
-        buf = bytearray(max(end, covered))
+        buf = bytearray(covered)
         for off, body in pieces:
             buf[off:off + len(body)] = body
-        data = bytes(buf[:end]) if end else bytes(buf)
-        dur = duration(data)
         done = covered >= end and end > 0
+        data = bytes(buf[:end]) if done else bytes(buf)
+        fixed = None
+        if not done:
+            data, fixed = repair_mp4(data)   # shrink mdat to what is present
+        dur = duration(data)
 
         print('video%d  <- %s%s' % (i, name, ''.join(' + ' + n for n in parts)))
         print('   %d pieces covering file[0 .. %d]' % (len(pieces), covered))
         print('   %s  %d bytes (%.1f MB)  %s' % (
-            'COMPLETE' if done else 'INCOMPLETE (%.1f%%)' % (100.0 * covered / end),
+            'COMPLETE' if done else 'INCOMPLETE (%.1f%% of %d)' % (
+                100.0 * covered / end, end) if end else 'NO DECLARED SIZE',
             len(data), len(data) / 1048576,
             '%.1fs (%d:%02d)' % (dur, int(dur) // 60, int(dur) % 60) if dur else '?'))
-        out = os.path.join(outdir, 'video%d_%s_%s.mp4'
-                           % (i, name, ('%ds' % int(dur)) if dur else 'partial'))
+        if fixed:
+            print('   mdat shrunk %d -> %d so the fragment plays' % fixed)
+        tag = ('%ds' % int(dur)) if dur else 'nodur'
+        if not done:
+            tag += '_incomplete%dpct' % (100.0 * covered / end) if end else '_partial'
+        out = os.path.join(outdir, 'video%d_%s_%s.mp4' % (i, name, tag))
         with open(out, 'wb') as f:
             f.write(data)
         print('   ->', out, '\n')

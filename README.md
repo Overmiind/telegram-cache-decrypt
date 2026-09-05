@@ -133,6 +133,12 @@ Reassembly: parse the head into parts, place each at its declared offset, then
 append the loose 8 MiB slices in write order, plus a final short slice sized to
 land exactly on the total the MP4 boxes declare.
 
+That total has to come from walking the boxes of the **whole assembled head**,
+not just its first part. `moov` is routinely larger than one 128 KiB part — a
+2:43 clip here carries a 162 KB one — and a walk that stops at the end of the
+first part never reaches `mdat`, so it mistakes the end of `moov` for the end of
+the file and truncates a 130 MB video to 163 KB.
+
 ### 4. Verifying it
 
 Container-level checks are not enough here — the misaligned build above parses
@@ -171,8 +177,16 @@ you supply.
 
 **Partial downloads.** Telegram only caches what you actually watched. When the
 slices don't add up to the declared size, the rebuild is reported as
-`INCOMPLETE` with the percentage present. The `mdat` box header can be shrunk to
-what's there to make the fragment playable.
+`INCOMPLETE` with the percentage present, the output is truncated to what is
+actually there, and its `mdat` header is shrunk to match — so the fragment plays
+instead of trailing off into megabytes of zeros.
+
+**Fragmented MP4.** Some cached streams are fMP4/DASH — `sidx` plus a chain of
+`moof`/`mdat` fragments, often HEVC — rather than progressive MP4. They rebuild
+and play normally, but they report a duration of `?`, because `mvhd` carries
+zero, and `verify.py` reports nothing for them: it reads the `stsz`/`stco`
+sample tables, which fragmented files don't have. Their samples are described by
+`trun` inside each `moof` instead.
 
 **Joining clips.** Cached videos often differ in resolution, so a stream-copy
 concat won't work; scale to a common size and re-encode, e.g.
